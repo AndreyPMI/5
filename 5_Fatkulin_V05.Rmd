@@ -1,0 +1,326 @@
+---
+title: "5"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+  word_document: default
+---
+
+
+Оценить стандартную ошибку модели для линейных регрессионных моделей из упражнения 4 (варианты ниже): а) со всеми объясняющими переменными; б) только с непрерывными объясняющими переменными: * методом проверочной выборки с долей обучающей 50%;
+* методом LOOCV;
+* k-кратной кросс-валидацией с k=5k=5 и k=10k=10.
+
+ 
+*Данные*: `Auto {ISLR}`   
+
+
+```{r}
+library('ISLR')              # набор данных Auto
+library('GGally')            # матричные графики
+library('boot')              # расчёт ошибки с кросс-валидацией
+
+my.seed <- 1
+```
+
+
+
+## Метод проверочной выборки 
+
+Он состоит в том, что мы отбираем одну тестовую выборку и будем считать на ней ошибку модели.    
+
+```{r}
+# общее число наблюдений
+n <- nrow(Auto)
+
+# доля обучающей выборки
+train.percent <- 0.5
+
+# выбрать наблюдения в обучающую выборку
+set.seed(my.seed)
+inTrain <- sample(n, n * train.percent)
+
+Auto$cylinders <- as.factor(Auto$cylinders)
+       
+```
+
+Построим модели для проверки точности. 
+
+
+
+``` {r}
+# присоединить таблицу с данными: названия стоблцов будут доступны напрямую
+attach(Auto)
+# подгонка линейной модели на обучающей выборке
+fit.lm.1 <- lm(mpg ~ horsepower+weight+displacement+cylinders, 
+               subset = inTrain)
+# считаем MSE на тестовой выборке
+mean((mpg[-inTrain] - predict(fit.lm.1,
+                              Auto[-inTrain, ]))^2)
+# отсоединить таблицу с данными
+detach(Auto)
+```
+
+```{r echo = F}
+err.test <- mean((Auto$mpg[-inTrain] - predict(fit.lm.1,
+                              Auto[-inTrain, ]))^2)
+names(err.test) <- 1
+```
+
+Строим **квадратичную модель**
+
+```{r}
+# присоединить таблицу с данными: названия стоблцов будут доступны напрямую
+attach(Auto)
+# подгонка линейной модели на обучающей выборке
+fit.lm.2 <- lm(mpg ~ poly(horsepower, 2)+poly(weight, 2)+poly(displacement, 2)+cylinders, 
+               subset = inTrain)
+# считаем MSE на тестовой выборке
+mean((mpg[-inTrain] - predict(fit.lm.2,
+                              Auto[-inTrain, ]))^2)
+# отсоединить таблицу с данными
+detach(Auto)
+```
+
+```{r echo = F}
+err.test <- c(err.test, 
+              mean((Auto$mpg[-inTrain] - predict(fit.lm.2,
+                                                 Auto[-inTrain, ]))^2))
+names(err.test)[length(err.test)] <- 2
+```
+
+Строим **кубическую модель**:  
+
+```{r}
+# присоединить таблицу с данными: названия стоблцов будут доступны напрямую
+attach(Auto)
+# подгонка линейной модели на обучающей выборке
+fit.lm.3 <- lm(mpg ~ poly(horsepower, 3)+poly(weight, 3)+poly(displacement, 3)+cylinders, 
+               subset = inTrain)
+# считаем MSE на тестовой выборке
+mean((mpg[-inTrain] - predict(fit.lm.3,
+                              Auto[-inTrain, ]))^2)
+# отсоединить таблицу с данными
+detach(Auto)
+```
+
+```{r echo = F}
+err.test <- c(err.test, 
+              mean((Auto$mpg[-inTrain] - predict(fit.lm.3,
+                              Auto[-inTrain, ]))^2))
+names(err.test)[length(err.test)] <- 3
+```
+### Перекрёстная проверка по отдельным наблюдениям (LOOCV)
+
+Это самый затратный в вычислительном плане метод, но и самый надёжный в плане оценки ошибки вне выборки. Попробуем применить его к линейной модели.    
+
+```{r}
+# подгонка линейной модели на обучающей выборке
+fit.glm <- glm(mpg ~ horsepower+weight+displacement+horsepower+cylinders, data = Auto)
+# считаем LOOCV-ошибку
+cv.err <- cv.glm(Auto, fit.glm)
+# результат: первое число -- по формуле LOOCV-ошибки,
+#  второе -- с поправкой на смещение
+cv.err$delta[1]
+```  
+
+Теперь оценим точность полиномиальных моделей, меняя степень, в которой стоит регрессор.   
+
+```{r}
+# вектор с LOOCV-ошибками
+cv.err.loocv <- rep(0, 5)
+
+names(cv.err.loocv) <- 1:5
+# цикл по степеням полиномов
+for (i in 1:5){
+  fit.glm <- glm(mpg ~ poly(horsepower, i)+poly(weight,i)+poly(displacement, i)+cylinders, data = Auto)
+  cv.err.loocv[i] <- cv.glm(Auto, fit.glm)$delta[1]
+}
+# результат
+cv.err.loocv
+```
+
+
+### k-кратная перекрёстная проверка
+
+K-кратная кросс-валидация -- компромисс между методом проверочной выборки и LOOCV. Оценка ошибки вне выборки ближе к правде, по сравнению с проверочной выборкой, а объём вычислений меньше, чем при LOOCV. Проведём 10-кратную кросс-валидацию моделей разных степеней.     
+
+```{r}
+# оценим точность полиномиальных моделей, меняя степень
+# вектор с ошибками по 10-кратной кросс-валидации
+cv.err.k.fold <- rep(0, 5)
+names(cv.err.k.fold) <- 1:5
+# цикл по степеням полиномов
+for (i in 1:5){
+  fit.glm <- glm(mpg ~ poly(horsepower, i)+poly(weight,i)+poly(displacement, i)+cylinders, data = Auto)
+  cv.err.k.fold[i] <- cv.glm(Auto, fit.glm,
+                             K = 10)$delta[1]
+}
+# результат
+cv.err.k.fold
+```
+Проведём 5-кратную кросс-валидацию моделей разных степеней.     
+
+```{r}
+# цикл по степеням полиномов
+for (i in 1:5){
+  fit.glm <- glm(mpg ~ poly(horsepower, i)+poly(weight,i)+poly(displacement, i)+cylinders, data = Auto)
+  cv.err.k.fold[i] <- cv.glm(Auto, fit.glm,
+                             K = 5)$delta[1]
+}
+# результат
+cv.err.k.fold
+```
+
+Для сравнения напомним результаты расчёта MSE методом проверочной выборки:   
+
+```{r}
+err.test
+```
+
+
+Опираясь на результаты расчётов с кросс-валидацией, можно заключить, что ошибка варьируется очень слабо, но точность модели второй степени выше чем линейной. 
+#ВЫвод
+##лучшая модель №2 - квадратическая 
+
+#повторим все операции без факторной переменной
+поскольку действия идентичны, то их описание будет отсутствовать. В конце так же подведем вывод.
+```{r}
+n <- nrow(Auto)
+train.percent <- 0.5
+set.seed(my.seed)
+inTrain <- sample(n, n * train.percent)
+
+attach(Auto)
+# подгонка линейной модели на обучающей выборке
+fit.lm.1 <- lm(mpg ~ horsepower+weight+displacement, 
+               subset = inTrain)
+# считаем MSE на тестовой выборке
+mean((mpg[-inTrain] - predict(fit.lm.1,
+                              Auto[-inTrain, ]))^2)
+# отсоединить таблицу с данными
+detach(Auto)
+```
+
+```{r echo = F}
+err.test <- mean((Auto$mpg[-inTrain] - predict(fit.lm.1,
+                              Auto[-inTrain, ]))^2)
+names(err.test) <- 1
+```
+
+Строим **квадратичную модель**
+
+```{r}
+# присоединить таблицу с данными: названия стоблцов будут доступны напрямую
+attach(Auto)
+# подгонка линейной модели на обучающей выборке
+fit.lm.2 <- lm(mpg ~ poly(horsepower, 2)+poly(weight, 2)+poly(displacement, 2), 
+               subset = inTrain)
+# считаем MSE на тестовой выборке
+mean((mpg[-inTrain] - predict(fit.lm.2,
+                              Auto[-inTrain, ]))^2)
+# отсоединить таблицу с данными
+detach(Auto)
+```
+
+```{r echo = F}
+err.test <- c(err.test, 
+              mean((Auto$mpg[-inTrain] - predict(fit.lm.2,
+                                                 Auto[-inTrain, ]))^2))
+names(err.test)[length(err.test)] <- 2
+```
+
+Строим **кубическую модель**:  
+
+```{r}
+# присоединить таблицу с данными: названия стоблцов будут доступны напрямую
+attach(Auto)
+# подгонка линейной модели на обучающей выборке
+fit.lm.3 <- lm(mpg ~ poly(horsepower, 3)+poly(weight, 3)+poly(displacement, 3), 
+               subset = inTrain)
+# считаем MSE на тестовой выборке
+mean((mpg[-inTrain] - predict(fit.lm.3,
+                              Auto[-inTrain, ]))^2)
+# отсоединить таблицу с данными
+detach(Auto)
+```
+
+```{r echo = F}
+err.test <- c(err.test, 
+              mean((Auto$mpg[-inTrain] - predict(fit.lm.3,
+                              Auto[-inTrain, ]))^2))
+names(err.test)[length(err.test)] <- 3
+```
+### Перекрёстная проверка по отдельным наблюдениям (LOOCV)
+
+Это самый затратный в вычислительном плане метод, но и самый надёжный в плане оценки ошибки вне выборки. Попробуем применить его к линейной модели.    
+
+```{r}
+# подгонка линейной модели на обучающей выборке
+fit.glm <- glm(mpg ~ horsepower+weight+displacement+horsepower, data = Auto)
+# считаем LOOCV-ошибку
+cv.err <- cv.glm(Auto, fit.glm)
+# результат: первое число -- по формуле LOOCV-ошибки,
+#  второе -- с поправкой на смещение
+cv.err$delta[1]
+```  
+
+Теперь оценим точность полиномиальных моделей, меняя степень, в которой стоит регрессор.   
+
+```{r}
+# вектор с LOOCV-ошибками
+cv.err.loocv <- rep(0, 5)
+
+names(cv.err.loocv) <- 1:5
+# цикл по степеням полиномов
+for (i in 1:5){
+  fit.glm <- glm(mpg ~ poly(horsepower, i)+poly(weight,i)+poly(displacement, i), data = Auto)
+  cv.err.loocv[i] <- cv.glm(Auto, fit.glm)$delta[1]
+}
+# результат
+cv.err.loocv
+```
+
+
+### k-кратная перекрёстная проверка
+
+K-кратная кросс-валидация -- компромисс между методом проверочной выборки и LOOCV. Оценка ошибки вне выборки ближе к правде, по сравнению с проверочной выборкой, а объём вычислений меньше, чем при LOOCV. Проведём 10-кратную кросс-валидацию моделей разных степеней.     
+
+```{r}
+# оценим точность полиномиальных моделей, меняя степень
+# вектор с ошибками по 10-кратной кросс-валидации
+cv.err.k.fold <- rep(0, 5)
+names(cv.err.k.fold) <- 1:5
+# цикл по степеням полиномов
+for (i in 1:5){
+  fit.glm <- glm(mpg ~ poly(horsepower, i)+poly(weight,i)+poly(displacement, i), data = Auto)
+  cv.err.k.fold[i] <- cv.glm(Auto, fit.glm,
+                             K = 10)$delta[1]
+}
+# результат
+cv.err.k.fold
+```
+Проведём 5-кратную кросс-валидацию моделей разных степеней.     
+
+```{r}
+# цикл по степеням полиномов
+for (i in 1:5){
+  fit.glm <- glm(mpg ~ poly(horsepower, i)+poly(weight,i)+poly(displacement, i), data = Auto)
+  cv.err.k.fold[i] <- cv.glm(Auto, fit.glm,
+                             K = 5)$delta[1]
+}
+# результат
+cv.err.k.fold
+```
+
+Для сравнения напомним результаты расчёта MSE методом проверочной выборки:   
+
+```{r}
+err.test
+```
+
+#как не сложно было догадаться, каченство модели без факторов ухудщшилось 
+так же разные методы показали разные результаты, это является приемлимым результатом, но на основании ухудшения MSE лучше воспользоваться результатом с фатором.
+Лучшая степень остается вторая.
